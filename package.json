@@ -1,0 +1,39 @@
+{
+  "name": "tick-attendance",
+  "private": true,
+  "type": "module",
+  "description": "Tick — school attendance by photo",
+  "scripts": {
+    "dev:api": "node --watch --env-file-if-exists=.env server/node.js",
+    "dev:web": "vite",
+    "build": "node scripts/fetch-models.mjs && tsc -p web && vite build",
+    "start": "node --env-file-if-exists=.env server/node.js",
+    "db:setup": "node --env-file-if-exists=.env scripts/db-setup.mjs",
+    "import-sqlite": "node --env-file-if-exists=.env scripts/import-sqlite.mjs"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.5.8",
+    "@fontsource-variable/bricolage-grotesque": "^5.3.0",
+    "@fontsource-variable/instrument-sans": "^5.3.0",
+    "@hono/node-server": "^2.1.5",
+    "@netlify/database": "^2.0.1",
+    "bcryptjs": "^3.0.3",
+    "hono": "^4.13.13",
+    "lucide-react": "^1.57.0",
+    "onnxruntime-web": "^1.30.0",
+    "pg": "^8.23.1",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@netlify/functions": "^6.0.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.7"
+  }
+}

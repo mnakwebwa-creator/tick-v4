@@ -1,0 +1,15 @@
+services:
+  tick:
+    build: .
+    ports: ["4000:4000"]
+    environment:
+      SCHOOL_TZ: Africa/Lusaka
+      # Optional — if left out, secrets are generated once and kept in the data volume
+      JWT_SECRET: ${JWT_SECRET:-}
+      TEMPLATE_KEY: ${TEMPLATE_KEY:-}
+      # DATABASE_URL: postgres://…   (optional: use an outside Postgres)
+    volumes: [tickdata:/app/data]
+    restart: unless-stopped
+
+volumes:
+  tickdata:

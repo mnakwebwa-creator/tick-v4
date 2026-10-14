@@ -1,0 +1,7 @@
+node_modules
+web/dist
+data
+.env
+.netlify
+# downloaded at build time by scripts/fetch-models.mjs (38 MB)
+web/public/models/sface.onnx
