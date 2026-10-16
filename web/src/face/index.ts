@@ -43,6 +43,9 @@ async function model(name: string, onProgress?: Progress): Promise<Uint8Array> {
   return bytes;
 }
 
+/** The loaded face models (downloaded once, then cached). */
+export function getEngine(onProgress?: Progress): Promise<Engine> { return load(onProgress); }
+
 function load(onProgress?: Progress): Promise<Engine> {
   engine ??= (async () => {
     const ort = await import("onnxruntime-web/wasm");

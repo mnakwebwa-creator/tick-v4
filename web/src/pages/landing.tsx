@@ -1,5 +1,6 @@
 import { Camera, CircleCheck, EyeOff, Hand, KeyRound, Lock, PenLine, ScanFace, ShieldCheck, UserCheck, Users, WifiOff } from "lucide-react";
 import { Logo, Tick } from "../ui";
+import { InstallButton } from "../pwa";
 
 /* A class photo drawn as simple figures: [x, y, head radius, skin, uniform] in a 300×400 frame */
 const KIDS: [number, number, number, string, string][] = [
@@ -95,14 +96,15 @@ export function Landing() {
           <div>
             <h1>Take the register in the time it takes to take a photo.</h1>
             <p className="lead">
-              Tick recognises your learners in one class photo and fills in the register for you.
+              Tick recognises your learners as they walk past the camera, or in one class photo, and fills in the register for you.
               You check the names, tap confirm, and the morning register is done.
             </p>
             <div className="ctas">
               <a className="btn go lg" href="#/signup">Set up your school</a>
               <a className="btn lg" href="#/signin">Sign in</a>
+              <InstallButton className="btn lg ghost" label="Install the app" />
             </div>
-            <p className="note">Use it online, or on your school's own computer with no internet needed.</p>
+            <p className="note">Recognises learners live through the camera — or from a photo. Install it on a phone like any app, or run it on your school's own computer with no internet needed.</p>
           </div>
           <Scene />
         </section>

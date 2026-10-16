@@ -1,0 +1,25 @@
+{
+  "id": "/",
+  "name": "Tick — school attendance",
+  "short_name": "Tick",
+  "description": "Take the school register by face recognition. Teachers confirm every name.",
+  "start_url": "/?source=app#/today",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#18223a",
+  "theme_color": "#18223a",
+  "lang": "en",
+  "dir": "ltr",
+  "categories": ["education", "productivity"],
+  "prefer_related_applications": false,
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Today's registers", "short_name": "Today", "url": "/?source=shortcut#/today", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Classes", "short_name": "Classes", "url": "/?source=shortcut#/classes", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}

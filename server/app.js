@@ -40,6 +40,28 @@ export function createApp({ db, config }) {
     q("INSERT INTO audit_log (user_id, action, details) VALUES ($1, $2, $3)", [userId, action, JSON.stringify(details)]);
   const insert = (sql, params, dupe) => q(sql, params).catch((e) => { throw dbError(e, dupe); });
 
+  /**
+   * Decrypted templates per class, kept briefly so live camera matching (several
+   * requests a second) doesn't decrypt the whole class each time. Cleared whenever
+   * faces, consent or class membership change on this server.
+   */
+  const templateCache = new Map(); // class_id -> { at, templates }
+  const TEMPLATE_TTL = 30_000;
+  async function classTemplates(classId) {
+    const hit = templateCache.get(classId);
+    if (hit && Date.now() - hit.at < TEMPLATE_TTL) return hit.templates;
+    const rows = await q(
+      `SELECT t.learner_id, t.template_data FROM face_templates t JOIN learners l ON l.id = t.learner_id
+        WHERE l.class_id = $1 AND l.status = 'active' AND l.consent AND t.revoked_at IS NULL`,
+      [classId],
+    );
+    const templates = await Promise.all(rows.map(async (r) => ({
+      learner_id: r.learner_id, vector: await decryptTemplate(config.templateKey, r.template_data),
+    })));
+    templateCache.set(classId, { at: Date.now(), templates });
+    return templates;
+  }
+
   // ---------- setup, errors ----------
   app.use("*", async (c, next) => {
     need(config.jwtSecret && config.templateKey, 503, "Tick isn't configured yet: set JWT_SECRET and TEMPLATE_KEY on the server");
@@ -180,31 +202,53 @@ export function createApp({ db, config }) {
     return c.json(u, 201);
   });
 
-  /** Approve, suspend, or change the role of a staff member. */
+  /** Edit a staff member: name, username, password reset, role, approve/suspend. */
   app.patch("/users/:id", adminOnly, async (c) => {
     const b = await body(c);
     const me = c.get("user");
     const [u] = await q("SELECT * FROM users WHERE id = $1", [id(c.req.param("id"), "Staff member")]);
     need(u, 404, "Staff member not found");
-    need(u.id !== me.id, 400, "You can't change your own access");
     const status = b.status ?? u.status;
     const role = b.role ?? u.role;
+    // Admins can edit their own name here, but never lock themselves out
+    need(u.id !== me.id || (status === u.status && role === u.role), 400, "You can't change your own access");
     need(["active", "pending", "suspended"].includes(status), 400, "Invalid status");
     need(["admin", "teacher"].includes(role), 400, "Invalid role");
-    const [out] = await q(
-      "UPDATE users SET status = $1, role = $2 WHERE id = $3 RETURNING id, username, full_name, role, status",
-      [status, role, u.id],
+    const fullName = b.full_name !== undefined ? text(b.full_name, "Full name") : u.full_name;
+    const username = b.username !== undefined ? checkUsername(b.username) : u.username;
+    const hash = b.password ? await bcrypt.hash(checkPassword(b.password), 10) : u.password_hash;
+    const [out] = await insert(
+      `UPDATE users SET status = $1, role = $2, full_name = $3, username = $4, password_hash = $5
+        WHERE id = $6 RETURNING id, username, full_name, role, status`,
+      [status, role, fullName, username, hash, u.id],
+      "That username is already taken",
     );
-    await audit(me.id, "user.update", { user_id: u.id, status, role });
+    await audit(me.id, "user.update", { user_id: u.id, status, role, password_reset: !!b.password });
     return c.json(out);
   });
 
-  /** Decline a sign-up request (only pending accounts can be removed). */
+  /**
+   * Remove a staff member. Pending requests are simply declined. Staff who have taken
+   * registers stay in the history: suspend them instead, so records keep their name.
+   */
   app.delete("/users/:id", adminOnly, async (c) => {
+    const me = c.get("user");
     const userId = id(c.req.param("id"), "Staff member");
-    const rows = await q("DELETE FROM users WHERE id = $1 AND status = 'pending' RETURNING id", [userId]);
-    need(rows.length, 400, "Only pending sign-up requests can be declined");
-    await audit(c.get("user").id, "user.decline", { user_id: userId });
+    need(userId !== me.id, 400, "You can't delete your own account");
+    const [u] = await q("SELECT id, status FROM users WHERE id = $1", [userId]);
+    need(u, 404, "Staff member not found");
+    const [{ n }] = await q(
+      `SELECT ((SELECT count(*) FROM attendance_sessions WHERE created_by = $1)
+             + (SELECT count(*) FROM attendance_records WHERE confirmed_by = $1))::int AS n`,
+      [userId],
+    );
+    need(n === 0, 409, "This person has taken registers, so they stay in the history. Suspend them instead");
+    await db.tx(async (tq) => {
+      await tq("UPDATE classes SET teacher_id = NULL WHERE teacher_id = $1", [userId]);
+      await tq("UPDATE audit_log SET user_id = NULL WHERE user_id = $1", [userId]);
+      await tq("DELETE FROM users WHERE id = $1", [userId]);
+    });
+    await audit(me.id, u.status === "pending" ? "user.decline" : "user.delete", { user_id: userId });
     return c.body(null, 204);
   });
 
@@ -302,6 +346,28 @@ export function createApp({ db, config }) {
     return c.json(out);
   });
 
+  /** Delete a class with everything in it: learners, their face data, and all its registers. */
+  app.delete("/classes/:id", adminOnly, async (c) => {
+    const cls = await loadClass(c.get("user"), c.req.param("id"));
+    const counts = await db.tx(async (tq) => {
+      const [{ records }] = await tq(
+        `WITH d AS (DELETE FROM attendance_records
+                     WHERE session_id IN (SELECT id FROM attendance_sessions WHERE class_id = $1)
+                        OR learner_id IN (SELECT id FROM learners WHERE class_id = $1) RETURNING 1)
+         SELECT count(*)::int AS records FROM d`,
+        [cls.id],
+      );
+      await tq("DELETE FROM attendance_sessions WHERE class_id = $1", [cls.id]);
+      await tq("DELETE FROM face_templates WHERE learner_id IN (SELECT id FROM learners WHERE class_id = $1)", [cls.id]);
+      const learners = await tq("DELETE FROM learners WHERE class_id = $1 RETURNING id", [cls.id]);
+      await tq("DELETE FROM classes WHERE id = $1", [cls.id]);
+      return { learners: learners.length, records };
+    });
+    templateCache.clear();
+    await audit(c.get("user").id, "class.delete", { class_id: cls.id, name: cls.name, ...counts });
+    return c.body(null, 204);
+  });
+
   app.get("/classes/:id", async (c) => {
     const cls = await loadClass(c.get("user"), c.req.param("id"));
     const [t] = cls.teacher_id ? await q("SELECT full_name FROM users WHERE id = $1", [cls.teacher_id]) : [];
@@ -342,6 +408,67 @@ export function createApp({ db, config }) {
     return c.json(l, 201);
   });
 
+  /** Enrol many learners at once: [{ student_number, full_name }]. All or nothing. */
+  app.post("/learners/bulk", async (c) => {
+    const b = await body(c);
+    const cls = await loadClass(c.get("user"), b.class_id);
+    need(cls.status === "active", 400, "That class is archived");
+    const list = Array.isArray(b.learners) ? b.learners : [];
+    need(list.length > 0 && list.length <= 300, 400, "Add between 1 and 300 learners at a time");
+    const rows = list.map((l, i) => {
+      const n = typeof l?.student_number === "string" ? l.student_number.trim() : "";
+      const name = typeof l?.full_name === "string" ? l.full_name.trim() : "";
+      need(n && name, 400, `Line ${i + 1} needs a student number and a name`);
+      return [n, name];
+    });
+    const seen = new Set();
+    for (const [n] of rows) { need(!seen.has(n.toLowerCase()), 400, `${n} is listed twice`); seen.add(n.toLowerCase()); }
+    const taken = await q("SELECT student_number FROM learners WHERE student_number = ANY($1::text[])", [rows.map((r) => r[0])]);
+    need(!taken.length, 409, `Already enrolled: ${taken.map((t) => t.student_number).slice(0, 5).join(", ")}${taken.length > 5 ? "…" : ""}`);
+    const created = await db.tx(async (tq) => {
+      const out = [];
+      for (const [n, name] of rows) {
+        const [l] = await tq(
+          "INSERT INTO learners (student_number, full_name, class_id, consent) VALUES ($1,$2,$3,$4) RETURNING *",
+          [n, name, cls.id, !!b.consent],
+        );
+        out.push(l);
+      }
+      return out;
+    }).catch((e) => { throw dbError(e, "One of those student numbers is already enrolled"); });
+    await audit(c.get("user").id, "learner.bulk_create", { class_id: cls.id, count: created.length });
+    return c.json({ created: created.length }, 201);
+  });
+
+  /** Find learners by name or student number across the classes this person can see. */
+  app.get("/learners", async (c) => {
+    const user = c.get("user");
+    const term = String(c.req.query("q") || "").trim().slice(0, 60);
+    if (term.length < 2) return c.json([]);
+    return c.json(await q(
+      `SELECT l.id, l.student_number, l.full_name, l.status, l.consent, l.class_id, c.name AS class_name,
+              (SELECT count(*)::int FROM face_templates t WHERE t.learner_id = l.id AND t.revoked_at IS NULL) AS template_count
+         FROM learners l JOIN classes c ON c.id = l.class_id
+        WHERE ($1::text = 'admin' OR c.teacher_id = $2)
+          AND (l.full_name ILIKE $3 OR l.student_number ILIKE $3)
+        ORDER BY l.status, l.full_name LIMIT 30`,
+      [user.role, user.id, `%${term.replace(/[\\%_]/g, (m) => `\\${m}`)}%`],
+    ));
+  });
+
+  /** Delete a learner for good: their face data and every attendance mark. */
+  app.delete("/learners/:id", async (c) => {
+    const learner = await loadLearner(c.get("user"), c.req.param("id"));
+    await db.tx(async (tq) => {
+      await tq("DELETE FROM attendance_records WHERE learner_id = $1", [learner.id]);
+      await tq("DELETE FROM face_templates WHERE learner_id = $1", [learner.id]);
+      await tq("DELETE FROM learners WHERE id = $1", [learner.id]);
+    });
+    templateCache.clear();
+    await audit(c.get("user").id, "learner.delete", { learner_id: learner.id, class_id: learner.class_id });
+    return c.body(null, 204);
+  });
+
   app.get("/learners/:id", async (c) => {
     const learner = await loadLearner(c.get("user"), c.req.param("id"));
     const templates = await q(
@@ -368,6 +495,7 @@ export function createApp({ db, config }) {
       }
       return row;
     }).catch((e) => { throw dbError(e, "That student number is already enrolled"); });
+    templateCache.clear();
     await audit(user.id, "learner.update", { learner_id: l.id, status: l.status, consent: l.consent });
     return c.json(l);
   });
@@ -386,6 +514,7 @@ export function createApp({ db, config }) {
       "INSERT INTO face_templates (learner_id, template_data, model_version) VALUES ($1,$2,$3) RETURNING id, model_version, created_at",
       [learner.id, await encryptTemplate(config.templateKey, embedding), MODEL_VERSION],
     );
+    templateCache.clear();
     await audit(c.get("user").id, "template.create", { learner_id: learner.id, template_id: t.id });
     return c.json(t, 201);
   });
@@ -397,6 +526,7 @@ export function createApp({ db, config }) {
       [id(c.req.param("templateId"), "Template"), learner.id],
     );
     need(rows.length, 404, "Template not found");
+    templateCache.clear();
     await audit(c.get("user").id, "template.revoke", { learner_id: learner.id, template_id: rows[0].id });
     return c.body(null, 204);
   });
@@ -434,6 +564,36 @@ export function createApp({ db, config }) {
     return c.json({ ...s, class: cls, learners });
   });
 
+  /** Change a register's date or name. */
+  app.patch("/attendance/sessions/:id", async (c) => {
+    const s = await loadSession(c.get("user"), c.req.param("id"));
+    const b = await body(c);
+    const date = b.session_date !== undefined ? isoDate(b.session_date) : s.session_date;
+    need(date <= todayIn(config.timeZone), 400, "A register can't be dated in the future");
+    const type = b.session_type !== undefined ? text(b.session_type, "Register name").slice(0, 60) : s.session_type;
+    const [out] = await insert(
+      "UPDATE attendance_sessions SET session_date = $1, session_type = $2 WHERE id = $3 RETURNING *",
+      [date, type, s.id],
+      "This class already has a register with that name on that day",
+    );
+    await audit(c.get("user").id, "attendance.session_update", { session_id: s.id, session_date: date, session_type: type });
+    return c.json(out);
+  });
+
+  /** Delete a register and every mark in it. */
+  app.delete("/attendance/sessions/:id", async (c) => {
+    const s = await loadSession(c.get("user"), c.req.param("id"));
+    const removed = await db.tx(async (tq) => {
+      const r = await tq("DELETE FROM attendance_records WHERE session_id = $1 RETURNING id", [s.id]);
+      await tq("DELETE FROM attendance_sessions WHERE id = $1", [s.id]);
+      return r.length;
+    });
+    await audit(c.get("user").id, "attendance.session_delete", {
+      session_id: s.id, class_id: s.class_id, session_date: s.session_date, session_type: s.session_type, records: removed,
+    });
+    return c.body(null, 204);
+  });
+
   /** Proposes matches only — nothing is saved until the teacher confirms. */
   app.post("/recognition/match", async (c) => {
     const b = await body(c);
@@ -443,20 +603,12 @@ export function createApp({ db, config }) {
       need(Array.isArray(f?.box) && f.box.length === 4 && f.box.every(Number.isFinite), 400, "Invalid face data");
       return { box: f.box.map(Math.round), embedding: checkEmbedding(f.embedding) };
     });
-    const rows = await q(
-      `SELECT t.learner_id, t.template_data FROM face_templates t JOIN learners l ON l.id = t.learner_id
-        WHERE l.class_id = $1 AND l.status = 'active' AND l.consent AND t.revoked_at IS NULL`,
-      [s.class_id],
-    );
-    const templates = await Promise.all(rows.map(async (r) => ({
-      learner_id: r.learner_id, vector: await decryptTemplate(config.templateKey, r.template_data),
-    })));
-    const results = matchFaces(faces, templates, config);
-    await audit(c.get("user").id, "recognition.run", {
-      session_id: s.id,
-      faces: results.length,
-      proposed: results.filter((r) => r.learner_id).map((r) => ({ learner_id: r.learner_id, similarity: r.similarity })),
-    });
+    const results = matchFaces(faces, await classTemplates(s.class_id), config);
+    const proposed = results.filter((r) => r.learner_id).map((r) => ({ learner_id: r.learner_id, similarity: r.similarity }));
+    // The live camera asks many times a second; only log the moments someone was recognised
+    if (!b.live || proposed.length) {
+      await audit(c.get("user").id, b.live ? "recognition.live" : "recognition.run", { session_id: s.id, faces: results.length, proposed });
+    }
     return c.json({ width: Number(b.width) || 0, height: Number(b.height) || 0, faces: results });
   });
 

@@ -1,11 +1,15 @@
 import { useState } from "react";
 import { ChevronLeft, ScanFace, ShieldCheck, ShieldOff, Trash2 } from "lucide-react";
-import { api, type Learner } from "../api";
+import { api, type Class, type Learner } from "../api";
 import { readFaces } from "../face";
-import { Alert, Avatar, PhotoPicker, Spinner, Tick, fmtDate, useAction, useLoad, useToast } from "../ui";
+import { LiveEnrol } from "../face/live-ui";
+import { Alert, Avatar, ConfirmDelete, PhotoPicker, Spinner, Tick, fmtDate, useAction, useLoad, useToast } from "../ui";
 
 export function LearnerPage({ id }: { id: string }) {
   const learner = useLoad(() => api<Learner>(`/learners/${id}`), [id]);
+  const classes = useLoad(() => api<Class[]>("/classes"), []);
+  const [deleting, setDeleting] = useState(false);
+  const [live, setLive] = useState(false);
   const save = useAction();
   const photo = useAction();
   const toast = useToast();
@@ -27,7 +31,14 @@ export function LearnerPage({ id }: { id: string }) {
   const saveDetails = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
-    update({ student_number: String(f.get("number")), full_name: String(f.get("name")) }, "Details saved");
+    const classId = Number(f.get("class"));
+    const moving = classId !== l.class_id;
+    const to = classes.data?.find((c) => c.id === classId);
+    update(
+      { student_number: String(f.get("number")), full_name: String(f.get("name")), class_id: classId },
+      moving ? `Moved to ${to?.name ?? "the new class"}` : "Details saved",
+      moving ? `Move ${l.full_name} to ${to?.name}? Past registers stay with the old class.` : undefined,
+    );
   };
 
   const addPhoto = (file: File) =>
@@ -91,7 +102,12 @@ export function LearnerPage({ id }: { id: string }) {
                     ))}
                   </div>
                 )}
-                {faces.length < 3 && <PhotoPicker onPhoto={addPhoto} disabled={photo.busy} hint="One learner in the photo, face clearly visible" />}
+                {faces.length < 3 && (live ? (
+                  <LiveEnrol learnerId={l.id} existing={faces.length} onAdded={() => { toast("Face added"); learner.reload(); }} onClose={() => setLive(false)} />
+                ) : (
+                  <PhotoPicker onPhoto={addPhoto} disabled={photo.busy} onCamera={() => setLive(true)}
+                    hint="With the camera, the face is captured by itself once it is clear" />
+                ))}
                 {photo.busy && <p className="muted small" style={{ display: "flex", gap: 8, alignItems: "center" }}><ScanFace size={18} /> {note}</p>}
                 <Alert msg={photo.error} />
               </>
@@ -119,9 +135,18 @@ export function LearnerPage({ id }: { id: string }) {
 
           <section className="panel">
             <div className="ph"><h2>Details</h2></div>
-            <form className="pb form" onSubmit={saveDetails}>
+            <form className="pb form" onSubmit={saveDetails} key={`${l.id}-${l.student_number}-${l.full_name}-${l.class_id}`}>
               <label className="field"><span>Student number</span><input className="input" name="number" defaultValue={l.student_number} required /></label>
               <label className="field"><span>Full name</span><input className="input" name="name" defaultValue={l.full_name} required /></label>
+              <label className="field">
+                <span>Class</span>
+                <select className="input" name="class" defaultValue={l.class_id} key={`${l.class_id}-${classes.data?.length ?? 0}`}>
+                  {(classes.data ?? []).filter((c) => c.status === "active" || c.id === l.class_id).map((c) => (
+                    <option key={c.id} value={c.id}>{c.name} ({c.academic_year})</option>
+                  ))}
+                  {!classes.data && <option value={l.class_id}>Current class</option>}
+                </select>
+              </label>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <button className="btn primary" disabled={save.busy}>Save details</button>
                 <button type="button" className="btn ghost" disabled={save.busy}
@@ -132,8 +157,26 @@ export function LearnerPage({ id }: { id: string }) {
               <Alert msg={save.error} />
             </form>
           </section>
+
+          <section className="panel">
+            <div className="pb">
+              <div className="danger-zone" style={{ marginTop: 0 }}>
+                <div><b>Delete learner</b><small>Removes their face data and every attendance mark. To keep the history when a learner leaves, mark them inactive.</small></div>
+                <button type="button" className="btn danger sm" onClick={() => setDeleting(true)}><Trash2 /> Delete</button>
+              </div>
+            </div>
+          </section>
         </div>
       </div>
+
+      <ConfirmDelete open={deleting} onClose={() => setDeleting(false)} title={`Delete ${l.full_name}?`} action="Delete learner"
+        onConfirm={async () => {
+          await api(`/learners/${l.id}`, { method: "DELETE" });
+          toast(`${l.full_name} deleted`);
+          location.hash = `#/classes/${l.class_id}`;
+        }}>
+        Their face data and all their attendance marks are removed for good. This can't be undone.
+      </ConfirmDelete>
     </>
   );
 }

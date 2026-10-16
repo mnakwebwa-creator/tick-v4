@@ -320,7 +320,7 @@ dialog.sheet[open] { animation: rise 0.18s ease-out; }
 
 .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 28px; }
 .page-head h1 { font-size: 30px; letter-spacing: -0.03em; }
-.page-head .meta { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.page-head .meta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
 .page-head .actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .crumb { display: inline-flex; align-items: center; gap: 6px; margin-bottom: 12px; color: var(--ink-2); text-decoration: none; font-size: 14px; font-weight: 500; }
 .crumb:hover { color: var(--ink); }
@@ -461,3 +461,86 @@ button.row { width: 100%; border-left: 0; border-right: 0; border-top: 0; backgr
 }
 
 @media (max-width: 620px) { .main .hide-sm { display: none; } }
+
+/* =========================================================
+   CRUD — search, danger zone, solid danger button
+   ========================================================= */
+.btn.danger.solid { background: var(--margin-ink); border-color: var(--margin-ink); color: #fff; }
+.btn.danger.solid:hover { background: #a02f2f; border-color: #a02f2f; }
+.toolbar { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+.search { position: relative; flex: 1 1 280px; max-width: 420px; display: block; }
+.search svg { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; color: var(--ink-3); pointer-events: none; }
+.search .input { padding-left: 38px; }
+.danger-zone { display: flex; gap: 16px; align-items: center; justify-content: space-between; margin-top: 12px; padding: 14px 16px; border: 1px solid #f3c4c4; border-radius: var(--r-md); background: var(--margin-soft); }
+.danger-zone b { display: block; color: var(--margin-ink); }
+.danger-zone small { display: block; color: var(--ink-2); font-size: 13px; margin-top: 2px; }
+.danger-zone .btn { flex: none; background: var(--paper); }
+textarea.input { resize: vertical; min-height: 120px; line-height: 1.5; }
+.seg button { display: inline-flex; align-items: center; gap: 6px; }
+
+/* =========================================================
+   LIVE CAMERA
+   ========================================================= */
+.live-stage { position: relative; border-radius: 12px; overflow: hidden; background: #0d1426; aspect-ratio: 4 / 3; }
+.live-stage video { display: block; width: 100%; height: 100%; object-fit: cover; }
+.live-stage .boxes { position: absolute; inset: 0; }
+.live-stage.mirror video, .live-stage.mirror .boxes { transform: scaleX(-1); }
+.live-stage.mirror .box span { transform: scaleX(-1) translateY(-100%); transform-origin: center; }
+.live-stage .box { transition: left 0.09s linear, top 0.09s linear, width 0.09s linear, height 0.09s linear; border-width: 3px; border-radius: 10px; }
+.live-stage .box span { font-size: 12.5px; padding: 2px 8px; border-radius: 6px 6px 0 0; white-space: nowrap; }
+.box.looking { border-color: rgba(255, 255, 255, 0.85); border-style: dashed; }
+.box.looking span { background: rgba(255, 255, 255, 0.9); }
+.live-hud { position: absolute; left: 10px; top: 10px; display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: rgba(13, 20, 38, 0.66); color: #fff; font-size: 12.5px; font-weight: 600; backdrop-filter: blur(4px); }
+.live-hud .rec { width: 8px; height: 8px; border-radius: 50%; background: #ff5a5a; animation: blink 1.4s ease-in-out infinite; }
+.live-hud .sep { width: 3px; height: 3px; border-radius: 50%; background: rgba(255, 255, 255, 0.5); }
+@keyframes blink { 50% { opacity: 0.25; } }
+.live-note { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 8px; max-width: calc(100% - 24px); padding: 8px 14px; border-radius: 999px; background: rgba(13, 20, 38, 0.78); color: #fff; font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; backdrop-filter: blur(4px); }
+.live-note.warn { background: rgba(138, 100, 0, 0.92); }
+.live-note.done { background: var(--green); }
+.live-note .tick path { stroke: #fff; }
+.live-note .hold { width: 54px; height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.25); overflow: hidden; }
+.live-note .hold i { display: block; height: 100%; background: #7fd6a6; transition: width 0.1s linear; }
+.cam-flip { position: absolute; right: 10px; top: 10px; background: rgba(13, 20, 38, 0.66); border-color: transparent; color: #fff; }
+.cam-flip:hover { background: rgba(13, 20, 38, 0.85); }
+.enrol-guide { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
+.enrol-guide i { width: 42%; aspect-ratio: 3 / 4; border-radius: 50%; border: 2px dashed rgba(255, 255, 255, 0.35); }
+.live-start { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; align-items: center; padding: 18px; border-radius: 12px; background: var(--canvas); border: 2px dashed #c9d6ea; }
+.live-start > svg { width: 30px; height: 30px; grid-row: span 2; color: var(--green); }
+.live-start .btn { grid-column: 1 / -1; justify-self: start; margin-top: 8px; }
+.live-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.switch { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 550; color: var(--ink-2); cursor: pointer; margin-left: auto; }
+.switch input { appearance: none; width: 38px; height: 22px; border-radius: 11px; background: #c9d6ea; position: relative; cursor: pointer; transition: background 0.15s; margin: 0; flex: none; }
+.switch input::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2); transition: transform 0.15s; }
+.switch input:checked { background: var(--green); }
+.switch input:checked::after { transform: translateX(16px); }
+
+/* =========================================================
+   INSTALLED APP (PWA)
+   ========================================================= */
+.app-banner { display: flex; align-items: center; gap: 14px; padding: 12px 14px; margin-bottom: 20px; border: var(--line); border-radius: var(--r-md); background: var(--paper); box-shadow: var(--lift); animation: rise 0.25s ease-out; }
+.app-banner img { border-radius: 11px; flex: none; }
+.app-banner .ic { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; background: var(--green-soft); color: var(--green-ink); flex: none; }
+.app-banner .grow { flex: 1; min-width: 0; }
+.app-banner .grow b { display: block; }
+.app-banner .grow small { display: block; color: var(--ink-2); font-size: 13px; }
+.install-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.install-steps li { display: flex; gap: 12px; align-items: flex-start; }
+.install-steps .k { width: 26px; height: 26px; border-radius: 8px; background: var(--rule-soft); display: grid; place-items: center; font-size: 13px; font-weight: 700; flex: none; }
+.install-steps .inline { display: inline; vertical-align: -3px; }
+.sheet-foot { display: flex; justify-content: flex-end; margin-top: 16px; }
+
+html { -webkit-tap-highlight-color: transparent; }
+@media (display-mode: standalone) {
+  /* Feel like a native app: no rubber-band page pull, no text selection on chrome, room for the notch */
+  html, body { overscroll-behavior-y: none; }
+  .side, .tabbar, .topbar, .btn, .nav-item { -webkit-user-select: none; user-select: none; }
+  .topbar { padding-top: env(safe-area-inset-top); height: calc(60px + env(safe-area-inset-top)); }
+  .auth-form { padding-top: calc(20px + env(safe-area-inset-top)); }
+}
+@media (max-width: 520px) {
+  .app-banner { flex-wrap: wrap; }
+  .app-banner .grow { flex-basis: calc(100% - 120px); }
+  .danger-zone { flex-direction: column; align-items: stretch; }
+  .live-stage { aspect-ratio: 3 / 4; }
+  .switch { margin-left: 0; }
+}

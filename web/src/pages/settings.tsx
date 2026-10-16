@@ -1,11 +1,13 @@
 import { LogOut } from "lucide-react";
 import { api, session, type User } from "../api";
 import { Alert, Avatar, PasswordInput, useAction, useToast } from "../ui";
+import { InstallButton, usePwa } from "../pwa";
 
 export function SettingsPage({ user, onUser }: { user: User; onUser: (u: User) => void }) {
   const profile = useAction();
   const pw = useAction();
   const toast = useToast();
+  const pwa = usePwa();
 
   const saveName = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -70,6 +72,20 @@ export function SettingsPage({ user, onUser }: { user: User; onUser: (u: User) =
           </section>
         </div>
 
+        <div className="stack">
+        <section className="panel">
+          <div className="ph"><h2>Tick app</h2>{pwa.installed && <span className="badge green">Installed</span>}</div>
+          <div className="pb form">
+            <p className="muted">
+              {pwa.installed
+                ? "You're using the installed app. It opens from your home screen and keeps working on a weak connection."
+                : "Install Tick on this device to open it from the home screen, full-screen, like any other app."}
+            </p>
+            {!pwa.installed && <div><InstallButton className="btn go" label="Install Tick" /></div>}
+            {pwa.updateReady && <div><button className="btn primary" onClick={pwa.update}>Update to the new version</button></div>}
+          </div>
+        </section>
+
         <section className="panel">
           <div className="ph"><h2>About Tick</h2></div>
           <div className="pb form">
@@ -82,6 +98,7 @@ export function SettingsPage({ user, onUser }: { user: User; onUser: (u: User) =
             </dl>
           </div>
         </section>
+        </div>
       </div>
     </>
   );

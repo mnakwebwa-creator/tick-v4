@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { ChevronLeft, RotateCcw, ScanFace, X } from "lucide-react";
+import { ChevronLeft, ImageUp, Pencil, RotateCcw, ScanFace, Trash2, Video, X } from "lucide-react";
 import { api, type MatchResult, type RegisterRow, type SessionDetail } from "../api";
 import { readFaces, warmUp } from "../face";
-import { Alert, PhotoPicker, Spinner, Tick, fmtDate, plural, useAction, useLoad, useToast } from "../ui";
+import { LiveRegister } from "../face/live-ui";
+import { Alert, ConfirmDelete, Dialog, PhotoPicker, Spinner, Tick, fmtDate, plural, today, useAction, useLoad, useToast } from "../ui";
 
 type Status = "present" | "absent";
 type Rec = { learner_id: number; status: Status; method: "face" | "manual"; similarity?: number | null };
@@ -12,6 +13,8 @@ export function RegisterPage({ id }: { id: string }) {
   const mark = useAction();
   const toast = useToast();
   const [justTicked, setJustTicked] = useState<Set<number>>(new Set());
+  const [editing, setEditing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const save = (records: Rec[], msg?: string) =>
     mark.run(async () => {
@@ -47,6 +50,8 @@ export function RegisterPage({ id }: { id: string }) {
           <div className="meta">
             <span className="badge plain">{d.class.name}</span>
             <span className="badge plain">{fmtDate(d.session_date, { weekday: "long", day: "numeric", month: "long" })}</span>
+            <button className="btn ghost sm icon" onClick={() => setEditing(true)} aria-label="Edit register" title="Change date or name"><Pencil /></button>
+            <button className="btn ghost sm icon danger" onClick={() => setDeleting(true)} aria-label="Delete register" title="Delete register"><Trash2 /></button>
           </div>
         </div>
         <div style={{ minWidth: 260, flex: "0 1 320px" }}>
@@ -89,9 +94,20 @@ export function RegisterPage({ id }: { id: string }) {
           ))}
         </section>
 
-        <Scanner sessionId={id} learners={d.learners} busy={mark.busy}
-          onConfirm={(rows) => save(rows.map((r) => ({ ...r, status: "present", method: "face" })), `${plural(rows.length, "learner")} marked present`)} />
+        <Scanner key={id} sessionId={id} learners={d.learners} busy={mark.busy}
+          onConfirm={(rows, quiet) => save(rows.map((r) => ({ ...r, status: "present", method: "face" })), quiet ? undefined : `${plural(rows.length, "learner")} marked present`)} />
       </div>
+
+      <EditRegister open={editing} detail={d} onClose={() => setEditing(false)} onSaved={() => s.reload()} />
+      <ConfirmDelete open={deleting} onClose={() => setDeleting(false)} title="Delete this register?" action="Delete register"
+        onConfirm={async () => {
+          await api(`/attendance/sessions/${id}`, { method: "DELETE" });
+          toast("Register deleted");
+          location.hash = `#/classes/${d.class_id}`;
+        }}>
+        {d.session_type} for {d.class.name} on {fmtDate(d.session_date, { weekday: "long", day: "numeric", month: "long" })}
+        {present + absent ? <>, with <b>{plural(present + absent, "mark")}</b>,</> : ""} is removed for good.
+      </ConfirmDelete>
     </>
   );
 }
@@ -113,22 +129,46 @@ function Marks({ row, onSet, busy, fresh }: { row: RegisterRow; onSet: (s: Statu
   );
 }
 
+type Confirm = (rows: { learner_id: number; similarity: number | null }[], quiet?: boolean) => Promise<boolean>;
+const MODE = "tick.scanMode";
+
+/** Recognise learners live from the camera (default), or from a photo. */
+function Scanner(props: { sessionId: string; learners: RegisterRow[]; busy: boolean; onConfirm: Confirm }) {
+  const [mode, setModeState] = useState<"live" | "photo">(() => {
+    try { return localStorage.getItem(MODE) === "photo" ? "photo" : "live"; } catch { return "live"; }
+  });
+  const setMode = (m: "live" | "photo") => { setModeState(m); try { localStorage.setItem(MODE, m); } catch { /* ignore */ } };
+  const canRecognise = props.learners.some((l) => l.template_count);
+  useEffect(() => { if (canRecognise) warmUp(); }, [canRecognise]);
+  return (
+    <section className="panel scan">
+      <div className="ph">
+        <h2>Recognise</h2>
+        <div className="seg" role="tablist" aria-label="How to recognise">
+          <button role="tab" aria-selected={mode === "live"} className={mode === "live" ? "on" : ""} onClick={() => setMode("live")}><Video size={15} /> Live</button>
+          <button role="tab" aria-selected={mode === "photo"} className={mode === "photo" ? "on" : ""} onClick={() => setMode("photo")}><ImageUp size={15} /> Photo</button>
+        </div>
+      </div>
+      {!canRecognise && <div className="pb" style={{ paddingBottom: 0 }}><Alert tone="info" msg="No learner in this class has a face added yet. Add faces from each learner's page, or mark the register by hand." /></div>}
+      {mode === "live"
+        ? <LiveRegister sessionId={Number(props.sessionId)} learners={props.learners} busy={props.busy} onConfirm={props.onConfirm} disabled={!canRecognise} />
+        : <PhotoScanner {...props} />}
+    </section>
+  );
+}
+
 /** Take or upload a photo, review proposed matches, confirm. */
-function Scanner({ sessionId, learners, busy, onConfirm }: {
-  sessionId: string; learners: RegisterRow[]; busy: boolean;
-  onConfirm: (rows: { learner_id: number; similarity: number | null }[]) => Promise<boolean>;
+function PhotoScanner({ sessionId, learners, busy, onConfirm }: {
+  sessionId: string; learners: RegisterRow[]; busy: boolean; onConfirm: Confirm;
 }) {
   const scan = useAction();
   const [photo, setPhoto] = useState<string | null>(null);
   const [result, setResult] = useState<MatchResult | null>(null);
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const byId = new Map(learners.map((l) => [l.id, l]));
-  const canRecognise = learners.some((l) => l.template_count);
   const [note, setNote] = useState("Looking for faces…");
 
   useEffect(() => () => { if (photo) URL.revokeObjectURL(photo); }, [photo]);
-  // Fetch the face model in the background so the first scan is quick
-  useEffect(() => { if (canRecognise) warmUp(); }, [canRecognise]);
 
   const run = (file: File) => {
     setPhoto(URL.createObjectURL(file));
@@ -161,13 +201,8 @@ function Scanner({ sessionId, learners, busy, onConfirm }: {
   const unknown = faces.length - known.length;
 
   return (
-    <section className="panel scan">
-      <div className="ph">
-        <h2>Scan a photo</h2>
-        {(photo || result) && <button className="btn ghost sm" onClick={reset}><RotateCcw /> New photo</button>}
-      </div>
       <div className="pb form">
-        {!canRecognise && <Alert tone="info" msg="No learner in this class has a face added yet. Add faces from each learner's page, or mark the register by hand." />}
+        {(photo || result) && <div><button className="btn ghost sm" onClick={reset}><RotateCcw /> New photo</button></div>}
 
         {!photo && <PhotoPicker onPhoto={run} disabled={scan.busy || busy} hint="The whole class, a group, or one learner" />}
 
@@ -219,6 +254,34 @@ function Scanner({ sessionId, learners, busy, onConfirm }: {
         )}
         <p className="faint small">Nothing is saved until you confirm. No one is marked absent from a photo.</p>
       </div>
-    </section>
+  );
+}
+
+function EditRegister({ open, detail, onClose, onSaved }: { open: boolean; detail: SessionDetail; onClose: () => void; onSaved: () => void }) {
+  const { busy, error, run, setError } = useAction();
+  const toast = useToast();
+  const close = () => { setError(""); onClose(); };
+  const submit = (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    run(async () => {
+      await api(`/attendance/sessions/${detail.id}`, { method: "PATCH", body: { session_date: f.get("date"), session_type: f.get("type") } });
+      toast("Register updated");
+      onSaved();
+      close();
+    });
+  };
+  return (
+    <Dialog open={open} onClose={close} title="Edit register" intro="Fix the date or the name. The marks stay as they are.">
+      <form className="form" onSubmit={submit}>
+        <label className="field"><span>Date</span><input className="input" type="date" name="date" defaultValue={detail.session_date} max={today()} required /></label>
+        <label className="field"><span>Register</span><input className="input" name="type" defaultValue={detail.session_type} maxLength={60} required /></label>
+        <Alert msg={error} />
+        <footer>
+          <button type="button" className="btn" onClick={close}>Cancel</button>
+          <button className="btn primary" disabled={busy}>Save changes</button>
+        </footer>
+      </form>
+    </Dialog>
   );
 }

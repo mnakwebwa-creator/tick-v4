@@ -11,7 +11,10 @@ import { RegisterPage } from "./pages/register";
 import { StaffPage } from "./pages/staff";
 import { SettingsPage } from "./pages/settings";
 import { Avatar, Logo, ToastProvider } from "./ui";
+import { InstallBanner, isStandalone, startPwa } from "./pwa";
 import "./styles.css";
+
+startPwa();
 
 /** Hash router: #/classes/3 → ["classes", "3"] */
 function useRoute() {
@@ -61,6 +64,8 @@ function App() {
     if (page === "signin") return <SignIn onDone={signedIn} />;
     if (page === "signup") return <SignUp onDone={signedIn} />;
     if (page && page !== "") { go("#/signin"); return null; }
+    // Opened from the home screen: go straight to sign in, like a native app
+    if (isStandalone()) { go("#/signin"); return null; }
     return <Landing />;
   }
 
@@ -121,7 +126,7 @@ function Shell({ user, section, pending, onSignOut, children }: {
         <a href="#/settings" aria-label="Your account"><Avatar name={user.full_name} /></a>
       </header>
 
-      <main className="main">{children}</main>
+      <main className="main"><InstallBanner />{children}</main>
 
       <nav className="tabbar" aria-label="Main" style={{ ["--n" as string]: items.length }}>
         {items.map((i) => (

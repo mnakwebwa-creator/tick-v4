@@ -69,6 +69,7 @@ const web = path.relative(process.cwd(), path.join(root, "web", "dist")) || ".";
 if (fs.existsSync(path.join(root, "web", "dist", "index.html"))) {
   site.use("/assets/*", async (c, next) => { await next(); c.header("Cache-Control", "public, max-age=31536000, immutable"); });
   site.use("/models/*", async (c, next) => { await next(); c.header("Cache-Control", "public, max-age=604800"); });
+  site.use("/sw.js", async (c, next) => { await next(); c.header("Cache-Control", "no-cache"); });
   site.use("/*", serveStatic({ root: web }));
   site.get("*", serveStatic({ path: path.join(web, "index.html") }));
 } else {

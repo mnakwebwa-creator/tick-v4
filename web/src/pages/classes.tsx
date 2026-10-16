@@ -1,7 +1,9 @@
-import { useState } from "react";
-import { Archive, ArchiveRestore, CalendarPlus, ChevronLeft, ChevronRight, ClipboardList, Pencil, Plus, School, UserPlus, Users } from "lucide-react";
-import { api, openRegister, type Class, type Learner, type Session, type Staff, type User } from "../api";
-import { Alert, Avatar, Dialog, Empty, Spinner, fmtDate, plural, today, useAction, useLoad, useToast } from "../ui";
+import { useEffect, useState } from "react";
+import { Archive, ArchiveRestore, CalendarPlus, ChevronLeft, ChevronRight, ClipboardList, FileUp, Pencil, Plus, School, Trash2, UserPlus, Users } from "lucide-react";
+import { api, openRegister, type Class, type Learner, type LearnerHit, type Session, type Staff, type User } from "../api";
+import {
+  Alert, Avatar, ConfirmDelete, Dialog, Empty, SearchBox, Spinner, fmtDate, matches, plural, today, useAction, useLoad, useToast,
+} from "../ui";
 
 /* ---------- list ---------- */
 
@@ -9,8 +11,10 @@ export function ClassesPage({ user, startNew }: { user: User; startNew?: boolean
   const classes = useLoad(() => api<Class[]>("/classes"), []);
   const [show, setShow] = useState<"active" | "archived">("active");
   const [creating, setCreating] = useState(!!startNew && user.role === "admin");
+  const [term, setTerm] = useState("");
+  const hits = useLearnerSearch(term);
   const admin = user.role === "admin";
-  const list = classes.data?.filter((c) => c.status === show) ?? [];
+  const list = classes.data?.filter((c) => c.status === show && matches(term, c.name, c.teacher_name, String(c.academic_year))) ?? [];
   const archivedCount = classes.data?.filter((c) => c.status === "archived").length ?? 0;
 
   return (
@@ -34,7 +38,29 @@ export function ClassesPage({ user, startNew }: { user: User; startNew?: boolean
       <Alert msg={classes.error} />
       {!classes.data && !classes.error && <Spinner />}
 
-      {classes.data && (
+      {!!classes.data?.length && (
+        <div className="toolbar"><SearchBox value={term} onChange={setTerm} placeholder="Search classes and learners" /></div>
+      )}
+
+      {hits.length > 0 && (
+        <section className="panel" style={{ marginBottom: 20 }}>
+          <div className="ph"><h2>Learners</h2><span className="faint small">{plural(hits.length, "match", "matches")}</span></div>
+          <div className="rows">
+            {hits.map((l) => (
+              <a className="row" key={l.id} href={`#/learners/${l.id}`}>
+                <Avatar name={l.full_name} />
+                <div className="grow"><b>{l.full_name}</b><small>{l.student_number}, {l.class_name}</small></div>
+                {l.status === "inactive" && <span className="badge">Inactive</span>}
+                <ChevronRight className="chev" />
+              </a>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {classes.data && (term && !list.length ? (
+        !hits.length && <p className="muted">Nothing matches “{term}”.</p>
+      ) : (
         <section className="panel">
           {list.length === 0 ? (
             <Empty
@@ -73,14 +99,28 @@ export function ClassesPage({ user, startNew }: { user: User; startNew?: boolean
             </div>
           )}
         </section>
-      )}
+      ))}
 
       {admin && <ClassForm open={creating} onClose={() => setCreating(false)} onSaved={(c) => { location.hash = `#/classes/${c.id}`; }} />}
     </>
   );
 }
 
-function ClassForm({ open, onClose, onSaved, cls }: { open: boolean; onClose: () => void; onSaved: (c: Class) => void; cls?: Class }) {
+/** Search learners across the classes this person can see (debounced). */
+function useLearnerSearch(term: string) {
+  const [hits, setHits] = useState<LearnerHit[]>([]);
+  useEffect(() => {
+    const t = term.trim();
+    if (t.length < 2) { setHits([]); return; }
+    const timer = setTimeout(() => api<LearnerHit[]>(`/learners?q=${encodeURIComponent(t)}`).then(setHits, () => setHits([])), 250);
+    return () => clearTimeout(timer);
+  }, [term]);
+  return hits;
+}
+
+function ClassForm({ open, onClose, onSaved, cls, onDelete }: {
+  open: boolean; onClose: () => void; onSaved: (c: Class) => void; cls?: Class; onDelete?: () => void;
+}) {
   const staff = useLoad(() => (open ? api<Staff[]>("/users") : Promise.resolve([])), [open]);
   const { busy, error, run } = useAction();
   const toast = useToast();
@@ -113,6 +153,12 @@ function ClassForm({ open, onClose, onSaved, cls }: { open: boolean; onClose: ()
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
           <button className="btn primary" disabled={busy}>{cls ? "Save changes" : "Create class"}</button>
         </footer>
+        {cls && onDelete && (
+          <div className="danger-zone">
+            <div><b>Delete this class</b><small>Removes its learners, their face data and every register. Archive it instead to keep the history.</small></div>
+            <button type="button" className="btn danger sm" onClick={() => { onClose(); onDelete(); }}><Trash2 /> Delete</button>
+          </div>
+        )}
       </form>
     </Dialog>
   );
@@ -128,6 +174,9 @@ export function ClassPage({ id, user }: { id: string; user: User }) {
   const [enrolling, setEnrolling] = useState(false);
   const [editing, setEditing] = useState(false);
   const [registerOpen, setRegisterOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [term, setTerm] = useState("");
   const act = useAction();
   const toast = useToast();
   const admin = user.role === "admin";
@@ -175,6 +224,7 @@ export function ClassPage({ id, user }: { id: string; user: User }) {
               {active ? <Archive /> : <ArchiveRestore />}
             </button>
           )}
+          {active && <button className="btn" onClick={() => setImporting(true)}><FileUp /> Import list</button>}
           {active && <button className="btn" onClick={() => setEnrolling(true)}><UserPlus /> Enrol learner</button>}
           {active && <button className="btn go" onClick={takeToday} disabled={act.busy || !current.length}><CalendarPlus /> Take today's register</button>}
         </div>
@@ -190,6 +240,10 @@ export function ClassPage({ id, user }: { id: string; user: User }) {
         </button>
       </div>
 
+      {tab === "learners" && (learners.data?.length ?? 0) > 6 && (
+        <div className="toolbar"><SearchBox value={term} onChange={setTerm} placeholder="Find a learner by name or number" /></div>
+      )}
+
       {tab === "learners" && (
         <section className="panel">
           {learners.data?.length === 0 ? (
@@ -198,7 +252,7 @@ export function ClassPage({ id, user }: { id: string; user: User }) {
             </Empty>
           ) : (
             <div className="rows">
-              {learners.data?.map((l) => (
+              {learners.data?.filter((l) => matches(term, l.full_name, l.student_number)).map((l) => (
                 <a className="row" key={l.id} href={`#/learners/${l.id}`}>
                   <Avatar name={l.full_name} />
                   <div className="grow">
@@ -249,7 +303,19 @@ export function ClassPage({ id, user }: { id: string; user: User }) {
       )}
 
       <EnrolForm open={enrolling} classId={c.id} onClose={() => setEnrolling(false)} onSaved={() => learners.reload()} />
-      {admin && <ClassForm open={editing} cls={c} onClose={() => setEditing(false)} onSaved={() => cls.reload()} />}
+      <BulkEnrol open={importing} classId={c.id} onClose={() => setImporting(false)} onSaved={() => learners.reload()} />
+      {admin && <ClassForm open={editing} cls={c} onClose={() => setEditing(false)} onSaved={() => cls.reload()} onDelete={() => setDeleting(true)} />}
+      {admin && (
+        <ConfirmDelete open={deleting} onClose={() => setDeleting(false)} title={`Delete ${c.name}?`} typeToConfirm={c.name} action="Delete class"
+          onConfirm={async () => {
+            await api(`/classes/${c.id}`, { method: "DELETE" });
+            toast(`${c.name} deleted`);
+            location.hash = "#/classes";
+          }}>
+          This permanently removes <b>{plural(learners.data?.length ?? 0, "learner")}</b>, their face data, and{" "}
+          <b>{plural(sessions.data?.length ?? 0, "register")}</b>. It can't be undone. To keep the history, archive the class instead.
+        </ConfirmDelete>
+      )}
       <OtherDate open={registerOpen} classId={c.id} onClose={() => setRegisterOpen(false)} />
     </>
   );
@@ -314,4 +380,56 @@ function OtherDate({ open, classId, onClose }: { open: boolean; classId: number;
       </form>
     </Dialog>
   );
+}
+
+/** Paste a list (from Excel, a class list, or typed) — one learner per line: number, then name. */
+function BulkEnrol({ open, classId, onClose, onSaved }: { open: boolean; classId: number; onClose: () => void; onSaved: () => void }) {
+  const { busy, error, run, setError } = useAction();
+  const toast = useToast();
+  const [textValue, setText] = useState("");
+  const [consent, setConsent] = useState(false);
+  const rows = parseList(textValue);
+  const bad = rows.filter((r) => !r.ok);
+  const close = () => { setText(""); setError(""); setConsent(false); onClose(); };
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    run(async () => {
+      const r = await api<{ created: number }>("/learners/bulk", {
+        body: { class_id: classId, consent, learners: rows.map((x) => ({ student_number: x.number, full_name: x.name })) },
+      });
+      toast(`${plural(r.created, "learner")} enrolled`);
+      onSaved();
+      close();
+    });
+  };
+  return (
+    <Dialog open={open} onClose={close} title="Import a class list" intro="Paste one learner per line: student number, then full name. Copying two columns from Excel works too.">
+      <form className="form" onSubmit={submit}>
+        <label className="field">
+          <span>Learners</span>
+          <textarea className="input" rows={8} value={textValue} onChange={(e) => setText(e.target.value)} autoFocus
+            placeholder={"KBS2026-001, Namakau Liswaniso\nKBS2026-002, Mwangala Sitali"} style={{ height: "auto", padding: 12, fontFamily: "inherit" }} />
+          <small>{rows.length ? `${plural(rows.length, "learner")} found${bad.length ? `, ${bad.length} need fixing (line ${bad.map((b) => b.line).slice(0, 4).join(", ")})` : ""}` : "Commas, tabs or semicolons all work."}</small>
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
+          <span><b>Guardians of everyone listed have agreed to face recognition</b><span className="small muted">Leave unticked if unsure. You can record consent per learner later.</span></span>
+        </label>
+        <Alert msg={error} />
+        <footer>
+          <button type="button" className="btn" onClick={close}>Cancel</button>
+          <button className="btn primary" disabled={busy || !rows.length || bad.length > 0}>Enrol {rows.length || ""} learners</button>
+        </footer>
+      </form>
+    </Dialog>
+  );
+}
+
+function parseList(text: string) {
+  return text.split(/\r?\n/).map((raw, i) => ({ raw: raw.trim(), line: i + 1 })).filter((x) => x.raw).map(({ raw, line }) => {
+    const parts = raw.split(/\t|;|,/).map((p) => p.trim()).filter(Boolean);
+    const [number, ...rest] = parts;
+    const name = rest.join(" ").replace(/\s+/g, " ");
+    return { line, number: number ?? "", name, ok: !!number && !!name };
+  });
 }

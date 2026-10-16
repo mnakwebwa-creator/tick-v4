@@ -1,6 +1,6 @@
-# Tick — school attendance by photo (version 4: host it anywhere)
+# Tick — school attendance by face recognition (version 4: host it anywhere)
 
-Teachers take the register by photo — one learner or a whole class — and confirm every match before it is saved. Marking by hand always works.
+Teachers take the register **live through the camera** — names appear on learners' faces as they walk past, no photo to take — or from a photo of the whole class. A teacher confirms every match (or switches on auto-marking for clear matches). Marking by hand always works. Tick **installs on phones like a native app**.
 
 This version runs **online on Netlify**, **on one school computer with no internet**, or **in Docker on any server**. It is the same app in every case.
 
@@ -95,7 +95,40 @@ The API is one Hono app (`server/app.js`) that takes a database and settings. Ea
 | Cloudflare Pages + Workers | Worker exporting `app.fetch` (with `nodejs_compat`); static files from `web/dist` | Neon serverless driver or Hyperdrive |
 | Split hosting (e.g. GitHub Pages for the app) | build with `VITE_API_URL=https://your-api…` | wherever the API runs |
 
-For **phones**, the app already works in mobile browsers. Next steps if wanted: a web-app manifest so it installs to the home screen (PWA), or a Capacitor wrapper for an Android APK.
+For **phones**, Tick installs to the home screen as a PWA (see *Install it on a phone*). If you ever need a Play Store APK, the same site can be wrapped with Bubblewrap (Trusted Web Activity) or Capacitor.
+
+## Live recognition (no photo needed)
+
+On a register, **Recognise → Live → Start camera**. Tick reads the camera about 10 times a second on the device itself:
+
+- Faces are found in every frame and followed as they move. Each new face is identified once (uncertain ones are re-checked every second or so), so the server gets a few small requests, not a video. The video never leaves the device.
+- Green box = clear match, amber = check, red = not known. Seen learners collect in a list; **Confirm N present** saves them.
+- **Auto-mark clear matches** saves clear matches the moment they're seen (good for a queue at the classroom door). Uncertain faces always wait for the teacher, and the camera never marks anyone absent.
+- **Switch camera** (phones/tablets) flips between front and back.
+- Enrolling a learner: **Live camera** captures the face by itself once exactly one face is close, clear and still — then *Add another angle* for a second or third.
+
+The camera needs HTTPS (or `localhost`). **Photo** mode is still there for whole-class photos.
+
+## Install it on a phone (PWA)
+
+Open the HTTPS site (e.g. your Netlify address) on the phone:
+
+- **Android (Chrome, Edge, Samsung Internet):** an *Install Tick on this phone* card appears — tap **Install**. Or menu ⋮ → *Install app*.
+- **iPhone / iPad (Safari):** tap **Install** on the card for the steps: Share → *Add to Home Screen*.
+- Also in **Settings → Tick app**, and on the landing page.
+
+Installed, Tick opens full-screen from its own icon, starts straight at sign-in, keeps working on a weak connection (the app and face models are cached), and offers **Update** when a new version is deployed. Registers are always fetched live, never from a stale copy. On a school LAN over plain `http://`, phones can't install it or use the camera — use the Netlify site, or put Caddy in front for HTTPS.
+
+## Managing records (CRUD)
+
+| | Create | Read / find | Update | Delete |
+|---|---|---|---|---|
+| **Staff** (admin) | Add staff, or approve sign-ups | Staff list + search | Name, username, role, **reset password**, suspend/restore | Delete accounts that never took a register (others: suspend, so history keeps their name) |
+| **Classes** (admin) | New class | List + search (also finds learners) | Name, year, teacher, archive/restore | **Delete class** — type its name to confirm; removes its learners, faces and registers |
+| **Learners** | Enrol one, or **Import list** (paste "number, name" lines or two Excel columns) | Search in a class or across all classes | Details, **move to another class**, consent, active/inactive, faces | **Delete learner** — face data and attendance marks too |
+| **Registers** | Take today's, or another date / sitting | Class → Registers | **Change date or name**; marks per learner | **Delete register** and its marks |
+
+Every change is written to the audit log.
 
 ## Before going live — checklist
 
@@ -129,6 +162,10 @@ server/node.js                  run on any computer: web app + API on port 4000
 server/schema.sql               tables (Postgres)
 web/src/face/core.ts            YuNet + SFace pipeline (port of the OpenCV code)
 web/src/face/index.ts           model download/caching, photo decoding
+web/src/face/live.ts            live camera: frame reader, face tracking, loop
+web/src/face/live-ui.tsx        live register + auto-capture enrolment
+web/src/pwa.tsx                 install prompt, service worker, update banner
+web/public/manifest.webmanifest, sw.js, icons/   the installable app
 web/src/pages/                  landing, auth, today, classes, learner, register, staff, settings
 web/public/models/              yunet.onnx (in repo), sface.onnx (downloaded at build)
 scripts/                        fetch-models, db-setup, import-sqlite
@@ -144,14 +181,18 @@ All routes need `Authorization: Bearer <token>` except `/api/auth/*`. Requests a
 | GET | `/api/auth/status` | Is this a new install? |
 | POST | `/api/auth/signup` · `/api/auth/login` | Create account (first = admin) · sign in |
 | GET/PATCH | `/api/me` | Own profile, name, password |
-| GET/POST, PATCH/DELETE | `/api/users`, `/api/users/:id` | Staff (admin) |
+| GET/POST, PATCH/DELETE | `/api/users`, `/api/users/:id` | Staff (admin): edit, reset password, delete |
 | GET | `/api/dashboard` | Today's registers, week, totals |
 | GET/POST, GET/PATCH | `/api/classes`, `/api/classes/:id` | Classes |
 | GET | `/api/classes/:id/learners` · `/sessions` | Learners · registers of a class |
-| POST, GET/PATCH | `/api/learners`, `/api/learners/:id` | Learners, consent |
+| POST, GET/PATCH/DELETE | `/api/learners`, `/api/learners/:id` | Learners, consent, move class, delete |
+| POST | `/api/learners/bulk` | `{ class_id, consent, learners:[{student_number, full_name}] }` |
+| GET | `/api/learners?q=` | Search learners by name or number |
+| DELETE | `/api/classes/:id` | Delete a class and everything in it (admin) |
+| PATCH/DELETE | `/api/attendance/sessions/:id` | Change a register's date/name · delete it |
 | POST | `/api/learners/:id/face-templates` | `{ embedding[128], model_version }` from the browser |
 | DELETE | `/api/learners/:id/face-templates/:templateId` | Revoke a face |
 | POST, GET | `/api/attendance/sessions`, `/:id` | Open / view a register |
-| POST | `/api/recognition/match` | `{ session_id, width, height, faces:[{box, embedding}] }` → proposals; saves nothing |
+| POST | `/api/recognition/match` | `{ session_id, width, height, faces:[{box, embedding}], live? }` → proposals; saves nothing |
 | POST | `/api/attendance/records` | Save confirmed decisions |
 | DELETE | `/api/attendance/sessions/:id/records/:learnerId` | Clear a mark |

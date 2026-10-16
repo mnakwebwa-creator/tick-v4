@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, Camera as CameraIcon, Check, Eye, EyeOff, ImageUp, X } from "lucide-react";
+import { AlertCircle, Camera as CameraIcon, Check, Eye, EyeOff, ImageUp, Search, Trash2, X } from "lucide-react";
 
 /* ---------- data hooks ---------- */
 
@@ -150,10 +150,62 @@ export function Dialog({ open, onClose, title, intro, children }: {
   );
 }
 
+/**
+ * Confirm a destructive action. With `typeToConfirm`, the person must type that word
+ * (e.g. the class name) first — used where a mistake would delete a lot.
+ */
+export function ConfirmDelete({ open, onClose, title, children, typeToConfirm, action = "Delete", onConfirm }: {
+  open: boolean; onClose: () => void; title: string; children: ReactNode; typeToConfirm?: string;
+  action?: string; onConfirm: () => Promise<unknown>;
+}) {
+  const { busy, error, run, setError } = useAction();
+  const [typed, setTyped] = useState("");
+  const close = () => { setTyped(""); setError(""); onClose(); };
+  const ready = !typeToConfirm || typed.trim().toLowerCase() === typeToConfirm.trim().toLowerCase();
+  return (
+    <Dialog open={open} onClose={close} title={title}>
+      <form className="form" onSubmit={(e) => { e.preventDefault(); if (ready) run(onConfirm).then((ok) => ok && close()); }}>
+        <div className="muted">{children}</div>
+        {typeToConfirm && (
+          <label className="field">
+            <span>Type <b>{typeToConfirm}</b> to confirm</span>
+            <input className="input" value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" autoFocus />
+          </label>
+        )}
+        <Alert msg={error} />
+        <footer>
+          <button type="button" className="btn" onClick={close}>Cancel</button>
+          <button className="btn danger solid" disabled={busy || !ready}><Trash2 /> {action}</button>
+        </footer>
+      </form>
+    </Dialog>
+  );
+}
+
+export function SearchBox({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder: string }) {
+  return (
+    <label className="search">
+      <Search aria-hidden />
+      <input className="input" type="search" value={value} placeholder={placeholder} aria-label={placeholder}
+        onChange={(e) => onChange(e.target.value)} />
+    </label>
+  );
+}
+
+/** Case-insensitive "contains" across a few fields. */
+export const matches = (term: string, ...fields: (string | null | undefined)[]) => {
+  const t = term.trim().toLowerCase();
+  return !t || fields.some((f) => f?.toLowerCase().includes(t));
+};
+
 /* ---------- photos ---------- */
 
 /** Upload, drop, or take a photo. */
-export function PhotoPicker({ onPhoto, disabled, hint }: { onPhoto: (file: File) => void; disabled?: boolean; hint?: string }) {
+export function PhotoPicker({ onPhoto, disabled, hint, onCamera }: {
+  onPhoto: (file: File) => void; disabled?: boolean; hint?: string;
+  /** Replace the built-in snapshot camera (e.g. with live, automatic capture). */
+  onCamera?: () => void;
+}) {
   const [camera, setCamera] = useState(false);
   const [over, setOver] = useState(false);
   const input = useRef<HTMLInputElement>(null);
@@ -177,8 +229,8 @@ export function PhotoPicker({ onPhoto, disabled, hint }: { onPhoto: (file: File)
         <button type="button" className="btn sm" disabled={disabled} onClick={() => input.current?.click()}>
           <ImageUp /> Choose photo
         </button>
-        <button type="button" className="btn sm" disabled={disabled} onClick={() => setCamera(true)}>
-          <CameraIcon /> Use camera
+        <button type="button" className="btn sm" disabled={disabled} onClick={() => (onCamera ? onCamera() : setCamera(true))}>
+          <CameraIcon /> {onCamera ? "Live camera" : "Use camera"}
         </button>
       </div>
       <input ref={input} type="file" accept="image/*" hidden onChange={(e) => { take(e.target.files?.[0]); e.target.value = ""; }} />

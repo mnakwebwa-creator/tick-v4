@@ -10,6 +10,7 @@ export type Learner = {
   consent: boolean; status: "active" | "inactive"; template_count?: number;
   templates?: { id: number; model_version: string; created_at: string }[];
 };
+export type LearnerHit = Learner & { class_name: string };
 export type Session = {
   id: number; class_id: number; session_date: string; session_type: string; present?: number; absent?: number;
 };
